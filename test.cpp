@@ -2,8 +2,8 @@
 using namespace std;
 
 int main(){
-    int x,y;
+    int x,y,Z;
     cin>>x>>y;
-    int z= x + y;
-    cout <<z<<endl;
+    int T= x + y + Z ;
+    cout <<T<<endl;
 }
