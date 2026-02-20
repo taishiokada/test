@@ -1,0 +1,273 @@
+/**
+ * @file test_sgp4.cpp
+ * @brief SGP4Propagatorクラスの検証用プログラム
+ *
+ * このプログラムは以下のテストを実行します:
+ * 1. 変換精度テスト
+ * 2. 軌道計算動作確認
+ * 3. 既存C版との比較（オプション）
+ */
+
+#include "SGP4Propagator.h"
+#include <iostream>
+#include <cstdio>
+#include <cmath>
+#include <iomanip>
+
+extern "C" {
+    #include "sgp4sdp4/sgp4sdp4.h"
+}
+
+// 定数
+const double PI = 3.14159265358979323846;
+const double DEG2RAD = PI / 180.0;
+const double RAD2DEG = 180.0 / PI;
+
+// ユーティリティ: ベクトルの大きさ
+double magnitude(const vector_t& v) {
+    return sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+}
+
+// ユーティリティ: 2つのベクトル間の距離
+double distance(const vector_t& v1, const vector_t& v2) {
+    double dx = v1.x - v2.x;
+    double dy = v1.y - v2.y;
+    double dz = v1.z - v2.z;
+    return sqrt(dx * dx + dy * dy + dz * dz);
+}
+
+int main() {
+    std::cout << "======================================" << std::endl;
+    std::cout << "  SGP4Propagator 検証プログラム" << std::endl;
+    std::cout << "======================================" << std::endl;
+
+    // ========================================
+    // テストデータ準備
+    // ========================================
+    std::cout << "\n[準備] テストデータ作成中..." << std::endl;
+
+    // ISS相当の軌道要素をint64_t配列形式で定義
+    int64_t tle_storage[9] = {
+        24,                    // [0] 元期: 2024年
+        100,                   // [1] 年通算日: 100日目
+        83097691,              // [2] 小数部: 0.83097691 × 10^8
+        516400,                // [3] 軌道傾斜角: 51.64° × 10^4
+        1234500,               // [4] 昇交点赤経: 123.45° × 10^4
+        10001534,              // [5] 離心率: (0.0001534+1.0) × 10^7
+        2678900,               // [6] 近地点引数: 267.89° × 10^4
+        932100,                // [7] 平均近点角: 93.21° × 10^4
+        155010347200000000   // [8] 平均運動: 15.50103472 rev/day × 10^14
+    };
+
+    std::cout << "  テストデータ:" << std::endl;
+    std::cout << "    元期: 2024年 100.83097691日目" << std::endl;
+    std::cout << "    軌道傾斜角: 51.64°" << std::endl;
+    std::cout << "    昇交点赤経: 123.45°" << std::endl;
+    std::cout << "    離心率: 0.0001534" << std::endl;
+    std::cout << "    近地点引数: 267.89°" << std::endl;
+    std::cout << "    平均近点角: 93.21°" << std::endl;
+    std::cout << "    平均運動: 15.50103472 rev/day" << std::endl;
+
+    // ========================================
+    // テスト1: 初期化確認
+    // ========================================
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "テスト1: 初期化確認" << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    SGP4Propagator propagator(tle_storage);
+
+    if (!propagator.isInitialized()) {
+        std::cerr << "❌ エラー: 初期化に失敗しました" << std::endl;
+        return -1;
+    }
+    std::cout << "✓ 初期化成功" << std::endl;
+
+    // ========================================
+    // テスト2: 変換精度確認
+    // ========================================
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "テスト2: int64_t → TLE 変換精度確認" << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    const tle_t& tle = propagator.getTLE();
+
+    // 期待値を計算
+    double epoch_expected = 24.0 * 1000.0 + 100.0 + 0.83097691;
+    double incl_expected = (516400.0 / 1e4) * DEG2RAD;
+    double raan_expected = (1234500.0 / 1e4) * DEG2RAD;
+    double ecc_expected = (10001534.0 / 1e7) - 1.0;
+    double argp_expected = (2678900.0 / 1e4) * DEG2RAD;
+    double mean_expected = (932100.0 / 1e4) * DEG2RAD;
+    double motion_expected = (155010347200000000.0 / 1e14) * (2.0 * PI / 1440.0);
+
+    std::cout << std::fixed << std::setprecision(10);
+
+    std::cout << "\n元期 (epoch):" << std::endl;
+    std::cout << "  期待値: " << epoch_expected << std::endl;
+    std::cout << "  実測値: " << tle.epoch << std::endl;
+    std::cout << "  誤差:   " << fabs(tle.epoch - epoch_expected) << std::endl;
+
+    std::cout << "\n軌道傾斜角 (inclination):" << std::endl;
+    std::cout << "  期待値: " << incl_expected << " rad (" << (incl_expected * RAD2DEG) << "°)" << std::endl;
+    std::cout << "  実測値: " << tle.xincl << " rad (" << (tle.xincl * RAD2DEG) << "°)" << std::endl;
+    std::cout << "  誤差:   " << fabs(tle.xincl - incl_expected) << " rad" << std::endl;
+
+    std::cout << "\n昇交点赤経 (RAAN):" << std::endl;
+    std::cout << "  期待値: " << raan_expected << " rad (" << (raan_expected * RAD2DEG) << "°)" << std::endl;
+    std::cout << "  実測値: " << tle.xnodeo << " rad (" << (tle.xnodeo * RAD2DEG) << "°)" << std::endl;
+    std::cout << "  誤差:   " << fabs(tle.xnodeo - raan_expected) << " rad" << std::endl;
+
+    std::cout << "\n離心率 (eccentricity):" << std::endl;
+    std::cout << "  期待値: " << ecc_expected << std::endl;
+    std::cout << "  実測値: " << tle.eo << std::endl;
+    std::cout << "  誤差:   " << fabs(tle.eo - ecc_expected) << std::endl;
+
+    std::cout << "\n近地点引数 (argument of perigee):" << std::endl;
+    std::cout << "  期待値: " << argp_expected << " rad (" << (argp_expected * RAD2DEG) << "°)" << std::endl;
+    std::cout << "  実測値: " << tle.omegao << " rad (" << (tle.omegao * RAD2DEG) << "°)" << std::endl;
+    std::cout << "  誤差:   " << fabs(tle.omegao - argp_expected) << " rad" << std::endl;
+
+    std::cout << "\n平均近点角 (mean anomaly):" << std::endl;
+    std::cout << "  期待値: " << mean_expected << " rad (" << (mean_expected * RAD2DEG) << "°)" << std::endl;
+    std::cout << "  実測値: " << tle.xmo << " rad (" << (tle.xmo * RAD2DEG) << "°)" << std::endl;
+    std::cout << "  誤差:   " << fabs(tle.xmo - mean_expected) << " rad" << std::endl;
+
+    std::cout << "\n平均運動 (mean motion):" << std::endl;
+    std::cout << "  期待値: " << motion_expected << " rad/min" << std::endl;
+    std::cout << "  実測値: " << tle.xno << " rad/min" << std::endl;
+    std::cout << "  誤差:   " << fabs(tle.xno - motion_expected) << " rad/min" << std::endl;
+
+    // 変換精度の判定
+    bool conversion_ok = true;
+    if (fabs(tle.epoch - epoch_expected) > 1e-6) conversion_ok = false;
+    if (fabs(tle.xincl - incl_expected) > 1e-9) conversion_ok = false;
+    if (fabs(tle.xnodeo - raan_expected) > 1e-9) conversion_ok = false;
+    if (fabs(tle.eo - ecc_expected) > 1e-10) conversion_ok = false;
+    if (fabs(tle.omegao - argp_expected) > 1e-9) conversion_ok = false;
+    if (fabs(tle.xmo - mean_expected) > 1e-9) conversion_ok = false;
+    if (fabs(tle.xno - motion_expected) > 1e-12) conversion_ok = false;
+
+    if (conversion_ok) {
+        std::cout << "\n✓ 変換精度テスト: 合格" << std::endl;
+    } else {
+        std::cout << "\n❌ 変換精度テスト: 不合格（許容誤差超過）" << std::endl;
+    }
+
+    // ========================================
+    // テスト3: 軌道伝播動作確認
+    // ========================================
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "テスト3: 軌道伝播動作確認" << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    double tsince_values[] = {0.0, 10.0, 60.0, 1440.0};
+    int num_tests = sizeof(tsince_values) / sizeof(double);
+
+    std::cout << std::setprecision(6);
+
+    for (int i = 0; i < num_tests; i++) {
+        double tsince = tsince_values[i];
+        vector_t pos, vel;
+
+        propagator.propagate(tsince, &pos, &vel);
+
+        // km, km/s に変換
+        Convert_Sat_State(&pos, &vel);
+
+        std::cout << "\n元期 + " << tsince << " 分後:" << std::endl;
+        std::cout << "  位置 [km]:" << std::endl;
+        std::cout << "    X = " << std::setw(12) << pos.x << std::endl;
+        std::cout << "    Y = " << std::setw(12) << pos.y << std::endl;
+        std::cout << "    Z = " << std::setw(12) << pos.z << std::endl;
+
+        std::cout << "  速度 [km/s]:" << std::endl;
+        std::cout << "    VX = " << std::setw(10) << vel.x << std::endl;
+        std::cout << "    VY = " << std::setw(10) << vel.y << std::endl;
+        std::cout << "    VZ = " << std::setw(10) << vel.z << std::endl;
+
+        double r = magnitude(pos);
+        double v = magnitude(vel);
+        std::cout << "  距離: " << r << " km" << std::endl;
+        std::cout << "  速度: " << v << " km/s" << std::endl;
+
+        // 妥当性チェック（LEO想定）
+        if (r < 6500.0 || r > 8000.0) {
+            std::cout << "  ⚠ 警告: 距離が想定範囲外 (6500-8000 km)" << std::endl;
+        }
+        if (v < 7.0 || v > 8.0) {
+            std::cout << "  ⚠ 警告: 速度が想定範囲外 (7.0-8.0 km/s)" << std::endl;
+        }
+    }
+
+    std::cout << "\n✓ 軌道伝播動作確認: 完了" << std::endl;
+
+    // ========================================
+    // テスト4: 既存C版との比較（オプション）
+    // ========================================
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "テスト4: 既存C版SGP4との比較" << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    // C版用にTLEデータを手動で設定
+    tle_t tle_c;
+    tle_c.epoch = tle.epoch;
+    tle_c.xincl = tle.xincl;
+    tle_c.xnodeo = tle.xnodeo;
+    tle_c.eo = tle.eo;
+    tle_c.omegao = tle.omegao;
+    tle_c.xmo = tle.xmo;
+    tle_c.xno = tle.xno;
+    tle_c.xndt2o = 0.0;
+    tle_c.xndd6o = 0.0;
+    tle_c.bstar = 0.0;
+    tle_c.catnr = 0;
+    tle_c.elset = 0;
+    tle_c.revnum = 0;
+
+    // C版の初期化
+    ClearFlag(ALL_FLAGS);
+
+    std::cout << "\n比較テスト（tsince = 10分）:" << std::endl;
+
+    // C++版
+    vector_t pos_cpp, vel_cpp;
+    propagator.propagate(10.0, &pos_cpp, &vel_cpp);
+    Convert_Sat_State(&pos_cpp, &vel_cpp);
+
+    // C版
+    vector_t pos_c, vel_c;
+    SGP4(10.0, &tle_c, &pos_c, &vel_c);
+    Convert_Sat_State(&pos_c, &vel_c);
+
+    std::cout << "\nC++版 位置 [km]:" << std::endl;
+    std::cout << "  X = " << pos_cpp.x << std::endl;
+    std::cout << "  Y = " << pos_cpp.y << std::endl;
+    std::cout << "  Z = " << pos_cpp.z << std::endl;
+
+    std::cout << "\nC版 位置 [km]:" << std::endl;
+    std::cout << "  X = " << pos_c.x << std::endl;
+    std::cout << "  Y = " << pos_c.y << std::endl;
+    std::cout << "  Z = " << pos_c.z << std::endl;
+
+    double pos_error = distance(pos_cpp, pos_c);
+    double vel_error = distance(vel_cpp, vel_c);
+
+    std::cout << "\n位置誤差: " << pos_error << " km" << std::endl;
+    std::cout << "速度誤差: " << vel_error << " km/s" << std::endl;
+
+    if (pos_error < 0.001 && vel_error < 0.000001) {
+        std::cout << "✓ C版との比較: 合格（誤差許容範囲内）" << std::endl;
+    } else {
+        std::cout << "⚠ C版との比較: 誤差が大きい可能性" << std::endl;
+    }
+
+    // ========================================
+    // 総合結果
+    // ========================================
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "検証完了" << std::endl;
+    std::cout << "========================================" << std::endl;
+
+    return 0;
+}
